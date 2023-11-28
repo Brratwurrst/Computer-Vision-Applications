@@ -1,0 +1,80 @@
+import cv2
+import time
+import numpy as np
+from sklearn import linear_model
+
+cap = cv2.VideoCapture(0)
+
+while(True):
+    start_time = time.time()
+    
+    def make_480p():
+        cap.set(3, 640)
+        cap.set(4, 480)
+
+    # Capture frame-by-frame
+    ret, frame = cap.read()
+
+    
+    Edges = cv2.Canny(frame,150,150)
+
+    edgepoints = []
+    for y in range(frame.shape[0]):
+         for x in range(frame.shape[1]):
+             if Edges[y,x] != 0 :
+                 edgepoints.append((x,y))
+            
+    edgepoints = np.array(edgepoints)
+    
+    # Use RANSAC to fit a line to the edge points
+    if len(edgepoints) > 2:
+        # Initialize the best model parameters and the number of inliers
+        best_params = None
+        max_inliers = 0
+
+        # Iterate over pairs of points
+        for i in range(len(edgepoints)):
+            for j in range(i + 1, len(edgepoints)):
+                # Calculate the line parameters (slope and intercept)
+                if edgepoints[j, 0] - edgepoints[i, 0] != 0:
+                    slope = (edgepoints[j, 1] - edgepoints[i, 1]) / (edgepoints[j, 0] - edgepoints[i, 0])
+                    intercept = edgepoints[i, 1] - slope * edgepoints[i, 0]
+
+                    # Count the number of inliers
+                    inliers = 0
+                    for point in edgepoints:
+                        # Calculate the distance from the point to the line
+                        distance = abs(slope * point[0] - point[1] + intercept) / np.sqrt(slope**2 + 1)
+
+                        # If the distance is less than the threshold, increment the inlier count
+                        if distance < 2:  # You can adjust this threshold as needed
+                            inliers += 1
+
+                    # If the number of inliers is greater than the current maximum, update the best model parameters
+                    if inliers > max_inliers:
+                        max_inliers = inliers
+                        best_params = (slope, intercept)
+
+        # If a line was found, draw it on the frame
+        if best_params is not None:
+            slope, intercept = best_params
+            cv2.line(frame, (0, int(intercept)), (frame.shape[1], int(slope * frame.shape[1] + intercept)), (0, 255, 0), 2)
+
+      
+    # Calculate FPS
+    fps = 1.0 / (time.time() - start_time)
+    
+    # Display FPS on the frame
+    cv2.putText(Edges, "FPS : " + str(round(fps,2)), (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+
+    
+    # Display the resulting frame
+    cv2.imshow('Original', frame)
+    cv2.imshow('Edges', Edges)
+    
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# When everything done, release the capture
+cap.release()
+cv2.destroyAllWindows()
