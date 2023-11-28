@@ -2,70 +2,76 @@ import cv2
 import time
 import numpy as np
 from sklearn import linear_model
+import random
 
 cap = cv2.VideoCapture(0)
+k = 10
 
 while(True):
     start_time = time.time()
     
-    def make_480p():
-        cap.set(3, 640)
-        cap.set(4, 480)
+    # Set the video resolution to 480p
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     # Capture frame-by-frame
     ret, frame = cap.read()
 
     
-    Edges = cv2.Canny(frame,150,150)
+    Edges = cv2.Canny(frame,50,150)
 
-    edgepoints = []
-    for y in range(frame.shape[0]):
-         for x in range(frame.shape[1]):
-             if Edges[y,x] != 0 :
-                 edgepoints.append((x,y))
+    # edgepoints_yx = np.column_stack(np.where(Edges > 0))
+   
+    # edgepoints = edgepoints[::k]
+    # for y in range(frame.shape[0]):
+    #      for x in range(frame.shape[1]):
+    #          if Edges[y,x] != 0 :
+    #              edgepoints.append((x,y))
             
-    edgepoints = np.array(edgepoints)
+    # edgepoints = np.array(edgepoints)
     
+    edge_points = np.argwhere(Edges != 0)
+    edge_points = edge_points[:, [1,0]] #change the x and y coordinates, because apparently they are backwards
+
     # Use RANSAC to fit a line to the edge points
-    if len(edgepoints) > 2:
+    if len(edge_points) > 2:
         # Initialize the best model parameters and the number of inliers
         best_params = None
         max_inliers = 0
 
-        # Iterate over pairs of points
-        for i in range(len(edgepoints)):
-            for j in range(i + 1, len(edgepoints)):
-                # Calculate the line parameters (slope and intercept)
-                if edgepoints[j, 0] - edgepoints[i, 0] != 0:
-                    slope = (edgepoints[j, 1] - edgepoints[i, 1]) / (edgepoints[j, 0] - edgepoints[i, 0])
-                    intercept = edgepoints[i, 1] - slope * edgepoints[i, 0]
+        # Perform a limited amount of iterations
+        for _ in range(100):
+            # Randomly select 2 points
+            point1, point2 = random.sample(list(edge_points), 2)
 
-                    # Count the number of inliers
-                    inliers = 0
-                    for point in edgepoints:
-                        # Calculate the distance from the point to the line
-                        distance = abs(slope * point[0] - point[1] + intercept) / np.sqrt(slope**2 + 1)
+            # Calculate the line parameters (slope and intercept)
+            if point2[0] - point1[0] != 0:
+                slope = (point2[1] - point1[1]) / (point2[0] - point1[0])
+                intercept = point1[1] - slope * point1[0]
 
-                        # If the distance is less than the threshold, increment the inlier count
-                        if distance < 2:  # You can adjust this threshold as needed
-                            inliers += 1
+                # Calculate the distances from all points to the line
+                distances = np.abs(slope * edge_points[:, 0] - edge_points[:, 1] + intercept) / np.sqrt(slope**2 + 1)
 
-                    # If the number of inliers is greater than the current maximum, update the best model parameters
-                    if inliers > max_inliers:
-                        max_inliers = inliers
-                        best_params = (slope, intercept)
+                # Count the number of inliers
+                inliers = np.sum(distances < 2)  # You can adjust this threshold as needed
+
+                # If the number of inliers is greater than the current maximum, update the best model parameters
+                if inliers > max_inliers:
+                    max_inliers = inliers
+                    best_params = (slope, intercept)
+
 
         # If a line was found, draw it on the frame
         if best_params is not None:
             slope, intercept = best_params
-            cv2.line(frame, (0, int(intercept)), (frame.shape[1], int(slope * frame.shape[1] + intercept)), (0, 255, 0), 2)
+            cv2.line(frame, (0, int(intercept)), (frame.shape[1], int(slope * frame.shape[1] + intercept)), (128, 255, 0), 2)
 
       
     # Calculate FPS
     fps = 1.0 / (time.time() - start_time)
     
     # Display FPS on the frame
-    cv2.putText(Edges, "FPS : " + str(round(fps,2)), (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+    cv2.putText(frame, "FPS : " + str(round(fps,2)), (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
 
     
     # Display the resulting frame

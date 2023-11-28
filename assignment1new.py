@@ -3,7 +3,7 @@ import cv2
 import time
 import numpy as np
 
-cap = cv2.VideoCapture('http://192.168.1.76:8080/video?type=some.mjpeg')
+cap = cv2.VideoCapture(0) #'http://192.168.1.76:8080/video?type=some.mjpeg')
 
 while(True):
     start_time = time.time()
