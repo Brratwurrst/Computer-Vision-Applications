@@ -1,0 +1,219 @@
+import cv2
+import time
+import numpy as np
+from sklearn import linear_model
+import random
+from sklearn.cluster import DBSCAN
+
+ 
+cap = cv2.VideoCapture('https://192.168.1.76:8080/video')
+
+time_last = time.time()
+frame_count = 0
+
+k = 1
+# Hough Transform parameters
+
+hough_rho = 1
+
+hough_theta = np.pi / 180
+
+hough_threshold = 100
+
+hough_min_line_length = 250
+
+hough_max_line_gap = 500
+
+ 
+
+target_width = 300
+
+target_height = 200
+
+# --------------------------
+
+   
+def line_params(line):
+    x1, y1, x2, y2 = line[0]
+    slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 1e10
+    intercept = y1 - slope * x1
+    length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+    return slope, intercept, length
+def line_intersection(line1, line2):
+    xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
+    ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
+
+    def det(a, b):
+        return a[0] * b[1] - a[1] * b[0]
+
+    div = det(xdiff, ydiff)
+    if div == 0:
+       raise Exception('lines do not intersect')
+
+    d = (det(*line1), det(*line2))
+    x = det(d, xdiff) / div
+    y = det(d, ydiff) / div
+    return x, y
+
+def angle_between_lines(line1, line2):
+    # Calculate the direction vectors of the lines
+    dx1 = line1[0][2] - line1[0][0]
+    dy1 = line1[0][3] - line1[0][1]
+    dx2 = line2[0][2] - line2[0][0]
+    dy2 = line2[0][3] - line2[0][1]
+    
+    # Calculate the dot product
+    dot_product = dx1*dx2 + dy1*dy2
+    
+    # Calculate the magnitudes of the vectors
+    mag1 = np.sqrt(dx1**2 + dy1**2)
+    mag2 = np.sqrt(dx2**2 + dy2**2)
+    
+    # Calculate the angle between the lines
+    #angle = np.arccos(dot_product / (mag1 * mag2)) * 180 / np.pi
+    angle = np.arccos(np.clip(dot_product / (mag1 * mag2), -1, 1)) * 180 / np.pi
+    return angle
+
+def order_points(pts):
+    rect = np.zeros((4, 2), dtype="float32")
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+    return rect
+
+def points_2_line(points):
+    x1 = points[:2]
+    x2 = points[2:]
+    x1 = np.append(x1, [1])
+    x2 = np.append(x2, [1])
+    return np.cross(x1,x2)
+
+def find_corners(lines, shape_frame):
+    intersects = []
+    for i in range(len(lines)):
+        for j in range(len(lines)):
+            if i != j:
+                l1 = points_2_line(lines[i])
+                l2 = points_2_line(lines[j])
+                x12 = np.cross(l1, l2)
+                if x12[2] == 0:
+                    continue
+                else:
+                    x12 = x12/x12[2]
+                    if abs(x12[0]) < shape_frame[1] and abs(x12[1]) < shape_frame[0]:
+                        if list(x12[:2]) not in intersects:
+                            intersects.append(list(x12[:2]))
+    return [[int(j) for j in i] for i in intersects]
+   
+
+
+while True:
+
+    frame_count += 1
+
+    ret, frame = cap.read()
+
+    if not ret:
+
+        print("Error reading from the camera.")
+
+        break
+
+   
+    # Convert the image to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    edges = cv2.Canny(blurred,200,200)
+
+    edge_points = np.argwhere(edges != 0)
+    edge_points = edge_points[:, [1,0]]
+    dilated = cv2.dilate(edges, None, iterations=1)
+
+    edge_points_yx = np.column_stack(np.where(dilated > 0))
+    edge_points_xy = edge_points_yx[:, [1, 0]]
+    edge_points_xy = edge_points_xy[::k]
+
+   
+
+    #lines = cv2.HoughLinesP(dilated, hough_rho, hough_theta, hough_threshold, None, hough_min_line_length, hough_max_line_gap).squeeze()
+ # Use the Hough Transform to detect lines
+    lines = cv2.HoughLinesP(edges, 1.0, np.pi/330, 50, minLineLength=180, maxLineGap=200).squeeze()
+    
+
+    if lines is not None:
+
+        filtered_lines = lines[:4]
+
+        for line in filtered_lines:
+
+            x1, y1, x2, y2 = line
+
+            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+
+      
+
+   
+            
+      
+
+        corner_coordinates = find_corners(filtered_lines, frame.shape)
+
+         
+
+       
+
+        # Convert the corner points to a NumPy array
+
+        corner_points = np.array(corner_coordinates, dtype=np.float32)
+
+      
+        corner_points = order_points(corner_points)
+
+        for intersection in corner_points:
+            y, x = map(int, intersection)
+            if edges[max(0, y-50):min(frame.shape[0], y+50), max(0, x-50):min(frame.shape[1], x+50)].any():
+                cv2.circle(frame, tuple(map(int, intersection)), 5, (0, 0, 255), -1)
+
+        # Define the target rectangle
+
+        target_rectangle = np.array([[0, 0], [target_width, 0], [target_width, target_height], [0, target_height]],
+
+                                    dtype=np.float32)
+
+        try:
+
+            # Calculate the perspective transformation matrix
+
+            transform_matrix = cv2.getPerspectiveTransform(corner_points, target_rectangle)
+            rectified_image = cv2.warpPerspective(frame, transform_matrix, (target_width, target_height))
+
+           
+
+            h, status = cv2.findHomography(corner_points, target_rectangle)
+            im_dst = cv2.warpPerspective(frame, h, (target_width, target_height))
+
+            cv2.imshow('Rectified Image', im_dst)
+
+        except cv2.error:
+            pass
+
+   
+    # calculate FPS and print it on frame
+    time_now = time.time()
+    fps = 1 / (time_now - time_last)
+    cv2.putText(frame, f'FPS: {round(fps, 2)}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2, cv2.LINE_AA)
+    time_last = time_now
+
+    cv2.imshow("frame", frame)
+    cv2.imshow("Edges", edges)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+
+        break
+
+cap.release()
+cv2.destroyAllWindows()
