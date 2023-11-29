@@ -1,0 +1,140 @@
+import cv2
+import time
+import numpy as np
+from sklearn import linear_model
+import random
+from sklearn.cluster import DBSCAN
+
+cap = cv2.VideoCapture('https://192.168.1.72:8080/video') #, cv2.CAP_DSHOW)
+k = 10
+def line_params(line):
+    x1, y1, x2, y2 = line[0]
+    slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 1e10
+    intercept = y1 - slope * x1
+    length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+    return slope, intercept, length
+
+while(True):
+    start_time = time.time()
+     
+    # Set the video resolution to 480p
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    # Capture frame-by-frame
+    ret, frame = cap.read()
+
+    # Convert the image to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    Edges = cv2.Canny(blurred,200,200)
+
+    edge_points = np.argwhere(Edges != 0)
+    edge_points = edge_points[:, [1,0]]
+
+    # Use the Hough Transform to detect lines
+    lines = cv2.HoughLinesP(Edges, 0.5, np.pi/270, 50, minLineLength=100, maxLineGap=10)
+
+    # If lines are detected
+    if lines is not None:
+
+        lines_params = [line_params(line) for line in lines]
+
+
+        # Cluster lines based on slope and intercept
+        clustering = DBSCAN(eps=1.0, min_samples=1).fit(lines_params)
+
+        # Get the labels of the clusters
+        labels = clustering.labels_
+
+        # Get the line with the longest length from each cluster
+        filtered_lines = []
+        for label in set(labels):
+            if label != -1:
+                cluster_lines = [lines[i] for i in range(len(lines)) if labels[i] == label]
+                if cluster_lines:
+                    longest_line = max(cluster_lines, key=line_params)
+                    filtered_lines.append(longest_line)
+        # # Draw the lines
+        # for line in filtered_lines:
+        #     x1, y1, x2, y2 = line[0]
+        #     cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            
+        for line in filtered_lines:
+            slope, intercept, _ = line_params(line)
+            if slope != 1e10:
+                x1 = 0
+                y1 = int(intercept)
+                x2 = frame.shape[1]
+                y2 = int(slope * frame.shape[1] + intercept)
+            else:
+                x1 = x2 = line[0][0]
+                y1 = 0
+                y2 = frame.shape[0]
+            cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+
+        # # Filter out lines that are too close to each other
+        # filtered_lines = []
+        # for i in range(len(lines)):
+        #     if all(np.abs(lines_params[i][0] - lines_params[j][0]) > 0.3 or np.abs(lines_params[i][1] - lines_params[j][1]) > 20. for j in range(len(lines)) if j != i):
+        #         filtered_lines.append(lines[i])
+
+        # # Calculate the number of points that belong to each line
+        # num_points = []
+        # for line in lines:
+        #     x1, y1, x2, y2 = line[0]
+        #     length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        #     num_points.append(len(np.where(np.abs((y2 - y1) * Edges.shape[1] - (x2 - x1) * np.arange(Edges.shape[0]) + x2 * y1 - y2 * x1) / length < 5)[0]))
+
+        # # Sort lines by the number of points
+        # lines = [line for _, line in sorted(zip(num_points, lines), key=lambda pair: pair[0], reverse=True)]
+
+        # for line in filtered_lines[:4]:
+        #     slope, intercept, _ = line_params(line)
+        #     if slope != float('inf'):
+        #         x1 = 0
+        #         y1 = int(intercept)
+        #         x2 = frame.shape[1]
+        #         y2 = int(slope * frame.shape[1] + intercept)
+        #     else:
+        #         x1 = x2 = line[0][0]
+        #         y1 = 0
+        #         y2 = frame.shape[0]
+        #     cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        # # Draw the four most prominent lines
+        # for line in lines[:4]:
+        #     x1, y1, x2, y2 = line[0]
+        #     cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+
+    # if lines is not None:
+    #     # Sort lines by length
+    #     lines = sorted(lines, key=lambda line: np.sqrt((line[0][0] - line[0][2])**2 + (line[0][1] - line[0][3])**2), reverse=True)
+        
+    #     # Cluster lines based on proximity using DBSCAN
+    #     X = np.array([(line[0][0], line[0][1]) for line in lines])
+    #     clustering = DBSCAN(eps=50, min_samples=2).fit(X)
+        
+    #     # Get the labels of the clusters
+    #     labels = clustering.labels_
+
+    #     # Draw the most prominent line from each cluster
+    #     for label in set(labels):
+    #         if label != -1:
+    #             cluster_lines = [lines[i] for i in range(len(lines)) if labels[i] == label]
+    #             if cluster_lines:
+    #                 x1, y1, x2, y2 = cluster_lines[0][0]
+    #                 cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+
+    # Display the resulting frame
+    cv2.imshow('Frame', frame)
+    cv2.imshow('Edges', Edges)
+    # Break the loop on 'q' key press
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Release the video capture and close windows
+cap.release()
+cv2.destroyAllWindows()
