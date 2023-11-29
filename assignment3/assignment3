@@ -6,15 +6,54 @@ import random
 from sklearn.cluster import DBSCAN
 
 cap = cv2.VideoCapture('https://192.168.1.72:8080/video') #, cv2.CAP_DSHOW)
-k = 10
+k = 30
 def line_params(line):
     x1, y1, x2, y2 = line[0]
     slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 1e10
     intercept = y1 - slope * x1
     length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
     return slope, intercept, length
+def line_intersection(line1, line2):
+    xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
+    ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
 
+    def det(a, b):
+        return a[0] * b[1] - a[1] * b[0]
+
+    div = det(xdiff, ydiff)
+    if div == 0:
+       raise Exception('lines do not intersect')
+
+    d = (det(*line1), det(*line2))
+    x = det(d, xdiff) / div
+    y = det(d, ydiff) / div
+    return x, y
+
+def angle_between_lines(line1, line2):
+    # Calculate the direction vectors of the lines
+    dx1 = line1[0][2] - line1[0][0]
+    dy1 = line1[0][3] - line1[0][1]
+    dx2 = line2[0][2] - line2[0][0]
+    dy2 = line2[0][3] - line2[0][1]
+    
+    # Calculate the dot product
+    dot_product = dx1*dx2 + dy1*dy2
+    
+    # Calculate the magnitudes of the vectors
+    mag1 = np.sqrt(dx1**2 + dy1**2)
+    mag2 = np.sqrt(dx2**2 + dy2**2)
+    
+    # Calculate the angle between the lines
+    angle = np.arccos(dot_product / (mag1 * mag2)) * 180 / np.pi
+    
+    return angle
+
+
+paused = False
 while(True):
+    # Capture frame-by-frame
+    if not paused:
+        ret, frame = cap.read()
     start_time = time.time()
      
     # Set the video resolution to 480p
@@ -33,8 +72,10 @@ while(True):
     edge_points = np.argwhere(Edges != 0)
     edge_points = edge_points[:, [1,0]]
 
+    dilated = cv2.dilate(Edges, None, iterations=1)
+
     # Use the Hough Transform to detect lines
-    lines = cv2.HoughLinesP(Edges, 0.5, np.pi/270, 50, minLineLength=100, maxLineGap=10)
+    lines = cv2.HoughLinesP(dilated, 0.5, np.pi/270, 50, minLineLength=270, maxLineGap=40)
 
     # If lines are detected
     if lines is not None:
@@ -43,7 +84,7 @@ while(True):
 
 
         # Cluster lines based on slope and intercept
-        clustering = DBSCAN(eps=1.0, min_samples=1).fit(lines_params)
+        clustering = DBSCAN(eps=2.0, min_samples=1).fit(lines_params)
 
         # Get the labels of the clusters
         labels = clustering.labels_
@@ -128,12 +169,84 @@ while(True):
     #                 cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
 
+   # Compute the intersections of the lines
+        intersections = []
+        # for i in range(len(filtered_lines)):
+        #     for j in range(i+1, len(filtered_lines)):
+        #         try:
+        #             intersection = line_intersection((filtered_lines[i][0][:2], filtered_lines[i][0][2:]), (filtered_lines[j][0][:2], filtered_lines[j][0][2:]))
+        #             if 0 <= intersection[0] <= frame.shape[1] and 0 <= intersection[1] <= frame.shape[0]:
+        #                 intersections.append(intersection)
+        #         except:
+        #             pass
+
+        for i in range(len(filtered_lines)):
+            for j in range(i+1, len(filtered_lines)):
+                angle = angle_between_lines(filtered_lines[i], filtered_lines[j])
+                if 20 <= angle <= 150:
+                    try:
+                        intersection = line_intersection((filtered_lines[i][0][:2], filtered_lines[i][0][2:]), (filtered_lines[j][0][:2], filtered_lines[j][0][2:]))
+                        y, x = map(int, intersection)
+                        if 0 <= intersection[0] <= frame.shape[1] and 0 <= intersection[1] <= frame.shape[0]: # and Edges[max(0, y-k):min(frame.shape[0], y+k), max(0, x-k):min(frame.shape[1], x+k)].any():
+                            intersections.append(intersection)
+                    except:
+                        pass
+
+
+        # # Draw the intersections
+        # for intersection in intersections:
+        #     y, x = map(int, intersection)
+        #     if Edges[max(0, y-50):min(frame.shape[0], y+50), max(0, x-50):min(frame.shape[1], x+50)].any():
+        #         cv2.circle(frame, tuple(map(int, intersection)), 5, (0, 0, 255), -1)
+
+        for intersection in intersections:
+            cv2.circle(frame, tuple(map(int, intersection)), 5, (0, 0, 255), -1)
+
+
+        if len(intersections) == 4:
+            intersections = np.array(intersections)
+            # Calculate the center of the intersection points
+            center = np.mean(intersections, axis=0)
+            # Sort the intersection points based on their angle from the center
+            angles = np.arctan2(intersections[:,1] - center[1], intersections[:,0] - center[0])
+            src_points = intersections[np.argsort(angles)]
+    
+            dst_points = np.float32([[0, 0], [frame.shape[1], 0], [frame.shape[1], frame.shape[0]], [0, frame.shape[0]]])
+            M, _ = cv2.findHomography(src_points, dst_points)
+
+            warped = cv2.warpPerspective(frame, M, (frame.shape[1], frame.shape[0]))
+            cv2.imshow('Warped', warped)
+        # # If four intersections are found, create a perspective transformation
+        # if len(intersections) == 4:
+        #     # Sort the intersections in clockwise order starting from the top-left corner
+        #     intersections = sorted(intersections, key=lambda p: (-p[1], p[0]))
+
+        #     # Create a perspective transformation
+        #     src_points = np.float32(intersections)
+        #     dst_points = np.float32([[0, 0], [frame.shape[1], 0], [frame.shape[1], frame.shape[0]], [0, frame.shape[0]]])
+        #     M, _ = cv2.findHomography(src_points, dst_points)
+
+        #     # Warp the image content to the new image
+        #     warped = cv2.warpPerspective(frame, M, (frame.shape[1], frame.shape[0]))
+
+        #     # Display the rectified image
+        #     cv2.imshow('Warped', warped)
+
     # Display the resulting frame
     cv2.imshow('Frame', frame)
-    cv2.imshow('Edges', Edges)
+    cv2.imshow('Edges', dilated)
+
+    # Listen for 'p' key press to pause/unpause
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('p'):
+        paused = not paused
     # Break the loop on 'q' key press
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    elif key == ord('q'):
         break
+
+    # # Break the loop on 'q' key press
+    # if cv2.waitKey(1) & 0xFF == ord('q'):
+    #     break
 
 # Release the video capture and close windows
 cap.release()
