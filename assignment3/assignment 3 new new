@@ -6,7 +6,7 @@ import random
 from sklearn.cluster import DBSCAN
 
  
-cap = cv2.VideoCapture('https://192.168.1.76:8080/video')
+cap = cv2.VideoCapture('https://192.168.1.72:8080/video')
 
 time_last = time.time()
 frame_count = 0
